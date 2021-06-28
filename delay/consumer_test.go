@@ -1,4 +1,4 @@
-package delayconsumer
+package delay
 
 import (
 	"errors"
@@ -34,7 +34,7 @@ func TestSubscribesToTopics(t *testing.T) {
 		return nil
 	}
 
-	delayConsumer := &DelayConsumer{
+	delayConsumer := &Consumer{
 		Consumer: kafkaConsumer,
 		Config:   dcc,
 	}
@@ -54,7 +54,7 @@ func TestStartFailsIfSubscribeTopicsFails(t *testing.T) {
 		return errors.New("forced subscription error")
 	}
 
-	delayConsumer := &DelayConsumer{
+	delayConsumer := &Consumer{
 		Consumer: kafkaConsumer,
 	}
 
@@ -81,7 +81,7 @@ func TestDelayConfigParsingInvalidResumeTime(t *testing.T) {
 
 		return nil, nil
 	}
-	delayConsumer := &DelayConsumer{
+	delayConsumer := &Consumer{
 		Consumer: kafkaConsumer,
 		Config:   dcc,
 	}
@@ -119,7 +119,7 @@ func TestDelayConfigMissingTargetTopic(t *testing.T) {
 		return nil, nil
 	}
 
-	delayConsumer := &DelayConsumer{Consumer: kafkaConsumer, Config: dcc}
+	delayConsumer := &Consumer{Consumer: kafkaConsumer, Config: dcc}
 
 	doneChan, _ := delayConsumer.Start()
 	wg.Wait()
@@ -171,7 +171,7 @@ func TestResumeTimeIsReached(t *testing.T) {
 		return nil
 	}
 
-	delayConsumer := &DelayConsumer{Consumer: kafkaConsumer, Producer: kafkaProducer, Config: dcc}
+	delayConsumer := &Consumer{Consumer: kafkaConsumer, Producer: kafkaProducer, Config: dcc}
 	doneChan, _ := delayConsumer.Start()
 	wg.Wait()
 	delayConsumer.Stop()
@@ -220,7 +220,7 @@ func TestResumeTimeIsReachedButDeliveryReportTimedOut(t *testing.T) {
 		return nil
 	}
 
-	delayConsumer := &DelayConsumer{Consumer: kafkaConsumer, Producer: kafkaProducer, Config: dcc}
+	delayConsumer := &Consumer{Consumer: kafkaConsumer, Producer: kafkaProducer, Config: dcc}
 	doneChan, _ := delayConsumer.Start()
 	wg.Wait()
 	delayConsumer.Stop()
@@ -273,7 +273,7 @@ func TestResumeTimeIsNotReached(t *testing.T) {
 	}
 	kafkaProducer := &mock.KafkaProducer{}
 
-	delayConsumer := &DelayConsumer{Consumer: kafkaConsumer, Producer: kafkaProducer, Config: dcc}
+	delayConsumer := &Consumer{Consumer: kafkaConsumer, Producer: kafkaProducer, Config: dcc}
 	doneChan, _ := delayConsumer.Start()
 	wg.Wait()
 

@@ -1,4 +1,4 @@
-package delayconsumer
+package delay
 
 import (
 	"errors"
@@ -32,14 +32,14 @@ type messageDelayConfig struct {
 	resumeTime  time.Time
 }
 
-type DelayConsumer struct {
+type Consumer struct {
 	Config   Config
 	Consumer kafka.Consumer
 	Producer kafka.Producer
 	run      bool
 }
 
-func (c *DelayConsumer) Start() (<-chan interface{}, error) {
+func (c *Consumer) Start() (<-chan interface{}, error) {
 	c.run = true
 
 	doneChan := make(chan interface{})
@@ -95,11 +95,11 @@ func (c *DelayConsumer) Start() (<-chan interface{}, error) {
 	return doneChan, nil
 }
 
-func (c *DelayConsumer) Stop() {
+func (c *Consumer) Stop() {
 	c.run = false
 }
 
-func (c *DelayConsumer) resumeTopicConsumption(topicPartition ck.TopicPartition, resumeTime time.Time) {
+func (c *Consumer) resumeTopicConsumption(topicPartition ck.TopicPartition, resumeTime time.Time) {
 	sleepTime := time.Until(resumeTime)
 
 	log.Printf("Sleeping %v before resuming topic consumption %s", sleepTime, *topicPartition.Topic)
@@ -109,7 +109,7 @@ func (c *DelayConsumer) resumeTopicConsumption(topicPartition ck.TopicPartition,
 	c.Consumer.Resume([]ck.TopicPartition{topicPartition})
 }
 
-func (c *DelayConsumer) republishMessage(targetTopic string, msg *ck.Message) error {
+func (c *Consumer) republishMessage(targetTopic string, msg *ck.Message) error {
 	pmsg := *msg
 	kafka.RemoveHeaders(c.Config.HeaderNames.names(), &pmsg)
 	pmsg.TopicPartition.Topic = &targetTopic
@@ -143,7 +143,7 @@ func isReadTimeout(msg *ck.Message, err error) bool {
 	return kafkaError.Code() == ck.ErrTimedOut
 }
 
-func (c *DelayConsumer) parseDelayConfigFromMessage(msg *ck.Message) (*messageDelayConfig, error) {
+func (c *Consumer) parseDelayConfigFromMessage(msg *ck.Message) (*messageDelayConfig, error) {
 	resumeTimeHeaderValue := string(kafka.SearchHeaderValue(msg.Headers, c.Config.HeaderNames.ResumeTime))
 	resumeTime, err := time.Parse(time.RFC3339, resumeTimeHeaderValue)
 	if err != nil {
