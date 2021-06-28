@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-redis/redis/v8"
 )
@@ -12,7 +13,12 @@ var ctx = context.Background()
 // Stores failure information in redis in form of sets that contain the message ids of
 // failed messages. These sets are keyed by $prefix:krnd:message-failures:$msgKey-$try
 type RedisFailureStorage struct {
-	Redis *redis.Client
+	Redis  *redis.Client
+	Config *RedisFailureStorageConfig
+}
+
+type RedisFailureStorageConfig struct {
+	KeyPrefix string
 }
 
 func (s *RedisFailureStorage) HasFailed(msgKey string, try uint) (bool, error) {
@@ -49,11 +55,24 @@ func (s *RedisFailureStorage) MarkSuccess(msgKey string, msgId string) error {
 }
 
 func (s *RedisFailureStorage) key(msgKey string, try uint) string {
-	return fmt.Sprintf("krnd:message-failures:%s-%d", msgKey, try)
+	return strings.TrimLeft(fmt.Sprintf(
+		"%s:krnd:message-failures:%s-%d",
+		s.keyPrefix(),
+		msgKey,
+		try,
+	), ":")
+}
+
+func (s *RedisFailureStorage) keyPrefix() string {
+	if s.Config != nil {
+		return s.Config.KeyPrefix
+	}
+
+	return ""
 }
 
 func (s *RedisFailureStorage) getMaxTry(msgKey string) (uint, error) {
-	for maxTry := uint(0);; maxTry++ {
+	for maxTry := uint(0); ; maxTry++ {
 		exists, err := s.Redis.Exists(ctx, s.key(msgKey, maxTry)).Result()
 		if err != nil {
 			return 0, err
