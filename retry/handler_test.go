@@ -7,6 +7,7 @@ import (
 
 	ck "github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/uuid"
 	"github.com/peaceman/kafka-rnd-go/kafka"
 	"github.com/peaceman/kafka-rnd-go/mock"
 )
@@ -19,17 +20,47 @@ var hc = MessageHandlerConfig{
 		HeaderNames: HeaderNameConfig{
 			ResumeTime:  "resume-time",
 			TargetTopic: "target-topic",
+			MessageId: "message-id",
 		},
 	},
 	DeliveryReportTimeout: time.Millisecond,
 }
 
-func TestHandler_RepublishesToDelayIfThereAreAlreadyFailuresInThisTry(t *testing.T) {
-	msgKey := "dis is msg key"
-	msg := &ck.Message{
+func createValidMessage(msgKey string) *ck.Message {
+	return &ck.Message{
 		Key:   []byte(msgKey),
 		Value: []byte("dis is msg value"),
+		Headers: []ck.Header{
+			{
+				Key:   hc.HeaderNames.MessageId,
+				Value: []byte(uuid.New().String()),
+			},
+		},
 	}
+}
+
+func getMessageId(msg *ck.Message) string {
+	return string(kafka.SearchHeaderValue(msg.Headers, hc.Config.HeaderNames.MessageId))
+}
+
+func TestHandler_IgnoresMessagesWithoutId(t *testing.T) {
+	msgKey := "dis is msg key"
+	msg := createValidMessage(msgKey)
+	msg.Headers = nil
+
+	handler := &RetryMessageHandler{
+		Config: hc,
+	}
+
+	if err := handler.Handle(msg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHandler_RepublishesToDelayIfThereAreAlreadyFailuresInThisTry(t *testing.T) {
+	msgKey := "dis is msg key"
+	msg := createValidMessage(msgKey)
+
 	kafkaProducer := &mock.KafkaProducer{
 		ProduceFn: func(m *ck.Message, c chan ck.Event) error {
 			if !cmp.Equal(*m.TopicPartition.Topic, hc.DelayTopic) {
@@ -69,13 +100,17 @@ func TestHandler_RepublishesToDelayIfThereAreAlreadyFailuresInThisTry(t *testing
 
 			return true, nil
 		},
-		MarkFailureFn: func(s string, u uint) error {
+		MarkFailureFn: func(s string, u uint, id string) error {
 			if !cmp.Equal(msgKey, s) {
 				t.Fatalf("Received unexpected message key: %v != %v", msgKey, s)
 			}
 
 			if u != 0 {
 				t.Fatalf("Received unexpected try counter: 0 != %v", u)
+			}
+
+			if id != getMessageId(msg) {
+				t.Fatalf("Received unexpected message id: %v != %v", getMessageId(msg), id)
 			}
 
 			return nil
@@ -107,16 +142,11 @@ func TestHandler_RepublishesToDelayIfThereAreAlreadyFailuresInThisTry(t *testing
 
 func TestHandler_HandleTryHeaderParsingErrorGracefully(t *testing.T) {
 	msgKey := "dis is msg key"
-	msg := &ck.Message{
-		Key:   []byte(msgKey),
-		Value: []byte("dis is msg value"),
-		Headers: []ck.Header{
-			{
-				Key:   hc.HeaderNames.Try,
-				Value: []byte("not a number"),
-			},
-		},
-	}
+	msg := createValidMessage(msgKey)
+	msg.Headers = append(msg.Headers, ck.Header{
+		Key: hc.HeaderNames.Try,
+		Value: []byte("not a number"),
+	})
 
 	failureStorage := &mockFailureStorage{
 		HasFailedFn: func(s string, u uint) (bool, error) {
@@ -144,16 +174,7 @@ func TestHandler_HandleTryHeaderParsingErrorGracefully(t *testing.T) {
 
 func TestHandler_FailureStorageErrorsAreReturned(t *testing.T) {
 	msgKey := "dis is msg key"
-	msg := &ck.Message{
-		Key:   []byte(msgKey),
-		Value: []byte("dis is msg value"),
-		Headers: []ck.Header{
-			{
-				Key:   hc.HeaderNames.Try,
-				Value: []byte("not a number"),
-			},
-		},
-	}
+	msg := createValidMessage(msgKey)
 
 	failureStorage := &mockFailureStorage{}
 
@@ -177,7 +198,7 @@ func TestHandler_FailureStorageErrorsAreReturned(t *testing.T) {
 		failureStorage.HasFailedFn = func(s string, u uint) (bool, error) {
 			return true, nil
 		}
-		failureStorage.MarkFailureFn = func(s string, u uint) error {
+		failureStorage.MarkFailureFn = func(s string, u uint, id string) error {
 			return errors.New("forced error")
 		}
 
@@ -197,6 +218,10 @@ func TestHandler_RepublishError(t *testing.T) {
 			{
 				Key:   hc.HeaderNames.Try,
 				Value: []byte("not a number"),
+			},
+			{
+				Key:   hc.HeaderNames.MessageId,
+				Value: []byte(uuid.New().String()),
 			},
 		},
 	}
@@ -237,25 +262,20 @@ func TestHandler_RepublishError(t *testing.T) {
 
 func TestHandle_HandleMessage(t *testing.T) {
 	msgKey := "dis is msg key"
-	msg := &ck.Message{
-		Key:   []byte(msgKey),
-		Value: []byte("dis is msg value"),
-		Headers: []ck.Header{
-			{
-				Key:   hc.HeaderNames.Try,
-				Value: []byte("not a number"),
-			},
-		},
-	}
-	kafkaProducer := &mock.KafkaProducer{}
+	msg := createValidMessage(msgKey)
 
+	kafkaProducer := &mock.KafkaProducer{}
 	failureStorage := &mockFailureStorage{
 		HasFailedFn: func(s string, u uint) (bool, error) {
 			return false, nil
 		},
-		MarkSuccessFn: func(s string) error {
+		MarkSuccessFn: func(s string, id string) error {
 			if s != msgKey {
 				t.Fatalf("Received unexpected message key: %s != %s", msgKey, s)
+			}
+
+			if id != getMessageId(msg) {
+				t.Fatalf("Received unexpected message id: %v != %v", getMessageId(msg), id)
 			}
 
 			return nil
@@ -293,16 +313,8 @@ func TestHandle_HandleMessage(t *testing.T) {
 
 func TestHandle_HandleMessageError(t *testing.T) {
 	msgKey := "dis is msg key"
-	msg := &ck.Message{
-		Key:   []byte(msgKey),
-		Value: []byte("dis is msg value"),
-		Headers: []ck.Header{
-			{
-				Key:   hc.HeaderNames.Try,
-				Value: []byte("not a number"),
-			},
-		},
-	}
+	msg := createValidMessage(msgKey)
+
 	kafkaProducer := &mock.KafkaProducer{
 		ProduceFn: func(m *ck.Message, c chan ck.Event) error {
 			if !cmp.Equal(*m.TopicPartition.Topic, hc.DelayTopic) {
@@ -334,13 +346,17 @@ func TestHandle_HandleMessageError(t *testing.T) {
 		HasFailedFn: func(s string, u uint) (bool, error) {
 			return false, nil
 		},
-		MarkFailureFn: func(s string, u uint) error {
+		MarkFailureFn: func(s string, u uint, id string) error {
 			if msgKey != s {
 				t.Fatalf("Received unexpected message key: %s != %s", msgKey, s)
 			}
 
 			if u != 0 {
 				t.Fatalf("Received unexpected try counter: 0 != %d", u)
+			}
+
+			if id != getMessageId(msg) {
+				t.Fatalf("Received unexpected message id: %v != %v", getMessageId(msg), id)
 			}
 
 			return nil
@@ -373,10 +389,10 @@ type mockFailureStorage struct {
 	HasFailedFn      func(string, uint) (bool, error)
 	HasFailedInvoked bool
 
-	MarkFailureFn      func(string, uint) error
+	MarkFailureFn      func(string, uint, string) error
 	MarkFailureInvoked bool
 
-	MarkSuccessFn      func(string) error
+	MarkSuccessFn      func(string, string) error
 	MarkSuccessInvoked bool
 }
 
@@ -390,21 +406,21 @@ func (s *mockFailureStorage) HasFailed(key string, try uint) (bool, error) {
 	}
 }
 
-func (s *mockFailureStorage) MarkFailure(key string, try uint) error {
+func (s *mockFailureStorage) MarkFailure(key string, try uint, msgId string) error {
 	s.MarkFailureInvoked = true
 
 	if s.MarkFailureFn != nil {
-		return s.MarkFailureFn(key, try)
+		return s.MarkFailureFn(key, try, msgId)
 	} else {
 		return nil
 	}
 }
 
-func (s *mockFailureStorage) MarkSuccess(key string) error {
+func (s *mockFailureStorage) MarkSuccess(key string, msgId string) error {
 	s.MarkSuccessInvoked = true
 
 	if s.MarkSuccessFn != nil {
-		return s.MarkSuccessFn(key)
+		return s.MarkSuccessFn(key, msgId)
 	} else {
 		return nil
 	}

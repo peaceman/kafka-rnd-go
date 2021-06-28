@@ -18,4 +18,5 @@ type HeaderNameConfig struct {
 	ResumeTime  string
 	TargetTopic string
 	Try         string
+	MessageId   string
 }

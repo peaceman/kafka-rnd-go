@@ -2,6 +2,7 @@ package retry
 
 import (
 	"errors"
+	"log"
 	"strconv"
 	"time"
 
@@ -29,10 +30,16 @@ type RetryMessageHandler struct {
 type messageMeta struct {
 	try uint
 	key string
+	id string
 }
 
 func (h *RetryMessageHandler) Handle(msg *ck.Message) error {
-	meta := h.parseMessageMeta(msg)
+	meta, err := h.parseMessageMeta(msg)
+	if err != nil {
+		log.Printf("Failed to parse message metadata; skipping message (%v)", err)
+		return nil
+	}
+
 	hasFailures, err := h.hasFailuresInThisTry(meta)
 	if err != nil {
 		return err
@@ -40,7 +47,6 @@ func (h *RetryMessageHandler) Handle(msg *ck.Message) error {
 
 	if hasFailures {
 		return h.handleFailedMessage(msg, meta)
-
 	} else {
 		if err = h.handleMessage(msg); err != nil {
 			return h.handleFailedMessage(msg, meta)
@@ -52,7 +58,7 @@ func (h *RetryMessageHandler) Handle(msg *ck.Message) error {
 	}
 }
 
-func (h *RetryMessageHandler) parseMessageMeta(msg *ck.Message) messageMeta {
+func (h *RetryMessageHandler) parseMessageMeta(msg *ck.Message) (*messageMeta, error) {
 	var try uint = 0
 
 	tryString := string(kafka.SearchHeaderValue(msg.Headers, h.Config.HeaderNames.Try))
@@ -62,21 +68,27 @@ func (h *RetryMessageHandler) parseMessageMeta(msg *ck.Message) messageMeta {
 		}
 	}
 
-	return messageMeta{
+	uuid := string(kafka.SearchHeaderValue(msg.Headers, h.Config.HeaderNames.MessageId))
+	if uuid == "" {
+		return nil, errors.New("missing message id")
+	}
+
+	return &messageMeta{
 		try: try,
 		key: string(msg.Key),
-	}
+		id: uuid,
+	}, nil
 }
 
-func (h *RetryMessageHandler) hasFailuresInThisTry(meta messageMeta) (bool, error) {
+func (h *RetryMessageHandler) hasFailuresInThisTry(meta *messageMeta) (bool, error) {
 	return h.FailureStorage.HasFailed(meta.key, meta.try)
 }
 
-func (h *RetryMessageHandler) markFailure(meta messageMeta) error {
-	return h.FailureStorage.MarkFailure(meta.key, meta.try)
+func (h *RetryMessageHandler) markFailure(meta *messageMeta) error {
+	return h.FailureStorage.MarkFailure(meta.key, meta.try, meta.id)
 }
 
-func (h *RetryMessageHandler) republish(incMsg *ck.Message, meta messageMeta) error {
+func (h *RetryMessageHandler) republish(incMsg *ck.Message, meta *messageMeta) error {
 	tryHeaderName := h.Config.HeaderNames.Try
 	resumeTimeHeaderName := h.Config.HeaderNames.ResumeTime
 
@@ -121,11 +133,11 @@ func (h *RetryMessageHandler) handleMessage(msg *ck.Message) error {
 	return h.Next.Handle(msg)
 }
 
-func (h *RetryMessageHandler) markSuccess(meta messageMeta) error {
-	return h.FailureStorage.MarkSuccess(meta.key)
+func (h *RetryMessageHandler) markSuccess(meta *messageMeta) error {
+	return h.FailureStorage.MarkSuccess(meta.key, meta.id)
 }
 
-func (h *RetryMessageHandler) handleFailedMessage(msg *ck.Message, meta messageMeta) error {
+func (h *RetryMessageHandler) handleFailedMessage(msg *ck.Message, meta *messageMeta) error {
 	if err := h.markFailure(meta); err != nil {
 		return err
 	}
