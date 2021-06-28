@@ -51,10 +51,8 @@ func (h *RetryMessageHandler) Handle(msg *ck.Message) error {
 		if err = h.handleMessage(msg); err != nil {
 			return h.handleFailedMessage(msg, meta)
 		} else {
-			h.markSuccess(meta)
+			return h.markSuccess(meta)
 		}
-
-		return nil
 	}
 }
 

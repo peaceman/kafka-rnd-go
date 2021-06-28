@@ -207,6 +207,20 @@ func TestHandler_FailureStorageErrorsAreReturned(t *testing.T) {
 			t.Fatal("Failure storage error was not returned")
 		}
 	})
+
+	t.Run("MarkSuccessError", func (t *testing.T) {
+		failureStorage.HasFailedFn = nil
+		failureStorage.MarkFailureFn = nil
+		failureStorage.MarkSuccessFn = func(s1, s2 string) error {
+			return errors.New("forced mark success error")
+		}
+
+		err := handler.Handle(msg)
+		if err == nil || err.Error() != "forced mark success error" {
+			t.Log(err)
+			t.Fatal("Failure storage error was not returned")
+		}
+	})
 }
 
 func TestHandler_RepublishError(t *testing.T) {
