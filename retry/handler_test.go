@@ -2,6 +2,7 @@ package retry
 
 import (
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -78,6 +79,11 @@ func TestHandler_RepublishesToDelayIfThereAreAlreadyFailuresInThisTry(t *testing
 
 			if _, err := time.Parse(time.RFC3339, resumeTimeString); err != nil {
 				t.Fatalf("Failed to parse resume time header value: %v", err)
+			}
+
+			tryString := string(kafka.SearchHeaderValue(m.Headers, hc.HeaderNames.Try))
+			if try, err := strconv.ParseUint(tryString, 10, 64); try != 1 || err != nil {
+				t.Fatalf("Try header was not set correctly: %v err: %v", try, err)
 			}
 
 			go func() {
@@ -346,6 +352,11 @@ func TestHandle_HandleMessageError(t *testing.T) {
 
 			if _, err := time.Parse(time.RFC3339, resumeTimeString); err != nil {
 				t.Fatalf("Failed to parse resume time header value: %v", err)
+			}
+
+			tryString := string(kafka.SearchHeaderValue(m.Headers, hc.HeaderNames.Try))
+			if try, err := strconv.ParseUint(tryString, 10, 64); try != 1 || err != nil {
+				t.Fatalf("Try header was not set correctly: %v err: %v", try, err)
 			}
 
 			go func() {
